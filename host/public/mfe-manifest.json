@@ -1,0 +1,4 @@
+{
+  "produtos": "http://localhost:3001/remoteEntry.js",
+  "checkout": "http://localhost:3002/remoteEntry.js"
+}
