@@ -1,10 +1,10 @@
 {
   "name": "mf-demo",
   "private": true,
-  "workspaces": ["host", "produtos", "checkout"],
+  "workspaces": ["host", "produtos", "checkout", "conta"],
   "scripts": {
-    "start": "concurrently -n host,produtos,checkout -c blue,green,magenta \"npm start -w host\" \"npm start -w produtos\" \"npm start -w checkout\"",
-    "build": "npm run build -w produtos && npm run build -w checkout && npm run build -w host"
+    "start": "concurrently -n host,produtos,checkout,conta -c blue,green,magenta,yellow \"npm start -w host\" \"npm start -w produtos\" \"npm start -w checkout\" \"npm start -w conta\"",
+    "build": "npm run build -w produtos && npm run build -w checkout && npm run build -w conta && npm run build -w host"
   },
   "overrides": {
     "webpack": "5.111.1"

@@ -2,43 +2,45 @@
 
 Projeto de estudo de **microfrontends com Module Federation** (Webpack 5 + `@module-federation/enhanced`) e React 18.
 
-São três aplicações independentes, cada uma com seu próprio build e servidor, que se juntam **no navegador, em tempo de execução**:
+São quatro aplicações independentes, cada uma com seu próprio build e servidor, que se juntam **no navegador, em tempo de execução**:
 
-| App        | Porta | Papel                                                                        |
-| ---------- | ----- | ---------------------------------------------------------------------------- |
-| `host`     | 3000  | Shell (core): layout, roteamento, estado do carrinho. Expõe `soft-redirect`. |
-| `produtos` | 3001  | MFE do catálogo. Expõe `./ListaProdutos`.                                    |
-| `checkout` | 3002  | MFE do carrinho. Expõe `./Carrinho`.                                         |
+| App        | Porta | Papel                                                                                   |
+| ---------- | ----- | --------------------------------------------------------------------------------------- |
+| `host`     | 3000  | Shell (core): layout, roteamento, estado do carrinho. Expõe `soft-redirect`.            |
+| `produtos` | 3001  | MFE do catálogo. Expõe o componente `./ListaProdutos`.                                  |
+| `checkout` | 3002  | MFE do carrinho. Expõe o componente `./Carrinho`.                                       |
+| `conta`    | 3003  | MFE da conta, com rotas próprias. Expõe a função `./montar` (padrão mount/unmount).     |
 
 ```
-              mfe-manifest.json
-                     │ (URLs dos remotes)
-                     ▼
-            ┌──────────────────┐
-            │   host (3000)    │── expõe ──▶ host/soft-redirect
-            └──────────────────┘                  ▲
-        carrega │          │ carrega              │ importam
-                ▼          ▼                      │
-     ┌──────────────┐  ┌──────────────┐           │
-     │ produtos     │  │ checkout     │───────────┘
-     │ (3001)       │  │ (3002)       │
-     └──────────────┘  └──────────────┘
+                         mfe-manifest.json
+                                │ (URLs dos remotes)
+                                ▼
+                       ┌──────────────────┐
+                       │   host (3000)    │── expõe ──▶ host/soft-redirect
+                       └──────────────────┘                  ▲
+         renderiza │       renderiza │       monta │         │ importam
+                   ▼                 ▼             ▼         │
+     ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+     │ produtos     │  │ checkout     │  │ conta        │    │
+     │ (3001)       │  │ (3002)       │  │ (3003)       │    │
+     └──────┬───────┘  └──────┬───────┘  └──────────────┘    │
+            └─────────────────┴──────────────────────────────┘
           React e react-dom: uma única instância (singleton)
 ```
 
 ## Como rodar
 
-Requer Node 18+.
+Requer Node 18+ (testado com Node 22).
 
 ```bash
 npm install
-npm start        # sobe as 3 apps em paralelo
+npm start        # sobe as 4 apps em paralelo
 ```
 
 - http://localhost:3000: a aplicação completa (host + MFEs)
-- http://localhost:3001 e http://localhost:3002: cada MFE rodando sozinho (standalone)
+- http://localhost:3001, http://localhost:3002 e http://localhost:3003: cada MFE rodando sozinho (standalone)
 
-Para gerar o build de produção das três apps (pasta `dist/` de cada uma):
+Para gerar o build de produção das quatro apps (pasta `dist/` de cada uma):
 
 ```bash
 npm run build
@@ -58,13 +60,19 @@ mf-demo/
 │       ├── mfe.js                 # registerRemotes / loadRemote
 │       ├── soft-redirect.js       # exposto para os MFEs
 │       ├── App.jsx                # rotas, carrinho, escuta de eventos
+│       ├── MfeMontado.jsx         # carrega e monta/desmonta MFEs do padrão mount
 │       └── ErrorBoundary.jsx      # isola falhas de cada MFE
 ├── produtos/
 │   ├── webpack.config.js          # expõe ./ListaProdutos, consome host
 │   └── src/ListaProdutos.jsx
-└── checkout/
-    ├── webpack.config.js          # expõe ./Carrinho, consome host
-    └── src/Carrinho.jsx
+├── checkout/
+│   ├── webpack.config.js          # expõe ./Carrinho, consome host
+│   └── src/Carrinho.jsx
+└── conta/
+    ├── webpack.config.js          # expõe ./montar, não consome ninguém
+    └── src/
+        ├── montar.jsx             # contrato: montar({ el, basePath, navegar }) -> desmontar
+        └── ContaApp.jsx           # app com sub-rotas próprias (/dados, /seguranca)
 ```
 
 ## Conceitos demonstrados
@@ -130,7 +138,7 @@ O código está em `host/src/mfe.js`:
 
 1. O MFE chama `softRedirect('/carrinho')`, importado do core (`host/soft-redirect`).
 2. A função dispara o evento `[mfe] navegar`.
-3. O host escuta, faz `history.pushState` e renderiza o MFE da nova rota.
+3. O host escuta, faz `history.pushState` e dispara um `popstate`. Assim o próprio host **e** os MFEs que têm rotas próprias (como o `conta`) releem a URL pelo mesmo caminho, e o host renderiza o MFE da nova rota.
 4. Os botões voltar e avançar do navegador funcionam via `popstate`.
 
 Os MFEs não conhecem o roteador do host. Eles só conhecem o contrato exposto pelo core, então mudar a navegação exige alterar apenas `host/src/soft-redirect.js`.
@@ -148,19 +156,61 @@ Os MFEs não conhecem o roteador do host. Eles só conhecem o contrato exposto p
 
 Cada MFE é renderizado dentro de `<ErrorBoundary>` + `<Suspense>`. Se um remote estiver fora do ar, só aquele pedaço da tela mostra um aviso, e o restante da aplicação continua funcionando.
 
+### Dois padrões de integração: componente vs. mount
+
+O projeto mostra as duas formas mais comuns de um shell integrar um MFE.
+
+**Componente** (`produtos`, `checkout`): o remote expõe um componente React, e o host o renderiza como qualquer outro (`componenteRemoto` em `host/src/mfe.js`).
+
+```jsx
+<Mfe itens={carrinho} onFinalizar={...} />
+```
+
+**Mount** (`conta`): o remote expõe uma **função** que recebe um elemento vazio e se desenha nele, com a própria raiz React. Ela devolve a função que o desmonta.
+
+```js
+// conta/src/montar.jsx
+export default function montar({ el, basePath, navegar }) {
+  const root = createRoot(el);
+  root.render(<ContaApp basePath={basePath} navegar={navegar} />);
+  return () => root.unmount();
+}
+```
+
+No host, `MfeMontado.jsx` carrega o remote com `loadRemote`, chama `montar` dentro de um `useEffect` e chama `desmontar` no cleanup. A rota é por **prefixo**: tudo abaixo de `/conta` pertence ao MFE, e as sub-rotas (`/conta/dados`, `/conta/seguranca`) são dele. O host não sabe que elas existem.
+
+| | Componente | Mount |
+| --- | --- | --- |
+| Quem controla a renderização | O host (árvore React única) | O MFE (raiz React própria) |
+| Rotas | Todas no host | O host só conhece o prefixo; o MFE cuida do resto |
+| Comunicação host → MFE | Props a cada render | Parâmetros do `montar` (contrato fixo) |
+| Versão do React | Precisa ser compatível com a do host | Pode ser outra, ou até outro framework |
+| Quando usar | Pedaços de tela (widget, card, carrinho) | Áreas inteiras mantidas por outro time |
+
+Detalhes que o `MfeMontado` trata e que costumam virar bug:
+
+- **Desmontar ao sair da rota.** Sem chamar `desmontar` no cleanup do efeito, cada troca de rota deixa uma raiz React órfã, com vazamento de memória e listeners duplicados. O MFE loga `[conta] montado` e `[conta] desmontado` no console para você conferir.
+- **Saída antes de o remote carregar.** Uma flag `cancelado` impede que o MFE seja montado numa tela que o usuário já deixou.
+- **Erro e timeout.** Se o remote não responder em 10 s, ou falhar, o erro é relançado no render e o mesmo `<ErrorBoundary>` dos outros MFEs exibe o aviso.
+- **Desmontagem adiada.** O cleanup roda durante o commit do host, e desmontar outra raiz de forma síncrona nesse momento gera um aviso do React. Por isso `desmontar` usa `setTimeout`.
+- **`key` pela base da rota.** O `<ErrorBoundary>` usa `key={base}`, não `key={path}`. Assim, navegar entre `/conta/dados` e `/conta/seguranca` não remonta o MFE.
+
 ## Experimentos sugeridos
 
 1. **Deploy independente:** com tudo rodando, altere um texto em `produtos/src/ListaProdutos.jsx` e recarregue o host. A mudança aparece sem tocar no host.
 2. **Falha isolada:** pare o checkout, ou aponte a URL dele no manifest para uma porta inexistente, e abra `/carrinho`. Aparece "Carrinho indisponível", e o header e a rota de produtos continuam funcionando.
-3. **Soft redirect:** no DevTools, aba Network, navegue entre Produtos e Carrinho. Não há nova requisição do documento, apenas o `remoteEntry.js` de cada MFE na primeira visita.
+3. **Soft redirect:** no DevTools, aba Network, navegue entre Produtos e Carrinho. Não há nova requisição do documento. Os `remoteEntry.js` de todos os MFEs são baixados uma vez, na abertura da página (ver Trade-offs).
 4. **Estado preservado:** adicione itens, vá ao carrinho e volte. O carrinho continua, porque a página nunca recarregou.
 5. **Singleton:** no DevTools, aba Network, confirme que o React é baixado uma única vez.
+6. **Rotas do MFE montado:** abra "Minha conta" e alterne entre Dados pessoais e Segurança. A URL muda, os botões voltar e avançar funcionam, e o console mostra um único `[conta] montado`. Ao voltar para Produtos, aparece `[conta] desmontado`.
+7. **Deep link:** abra direto http://localhost:3000/conta/seguranca. O host só reconhece o prefixo `/conta`, e o MFE decide qual página mostrar.
 
 ## Trade-offs
 
 - **Quando usar:** vários times que precisam de deploys independentes. Para um time pequeno, um monólito modular costuma ser mais simples.
 - **Custos:** mais complexidade operacional, risco de conflito de versões entre MFEs, mais requisições de rede e testes de integração mais difíceis.
-- **Acoplamento ao core:** os MFEs dependem do `host` no ar para importar o `soft-redirect`. Rodando standalone, o host também precisa estar rodando.
+- **Acoplamento ao core:** `produtos` e `checkout` dependem do `host` no ar para importar o `soft-redirect`. Rodando standalone, o host também precisa estar rodando. O `conta` recebe a navegação como parâmetro do `montar` e roda sozinho.
+- **Carregamento de todos os remotes na abertura:** com a estratégia padrão de compartilhamento (`shareStrategy: 'version-first'`), o runtime baixa o `remoteEntry.js` de todos os remotes registrados para escolher a maior versão de cada dependência compartilhada. A troca é tempo de abertura por garantia de versão; `'loaded-first'` inverte isso.
 - **Estado de módulo:** `softRedirect` não guarda estado, então múltiplas instâncias não são problema. Um módulo exposto **com estado** (uma fila global, um cache) precisa que todos os MFEs recebam a mesma instância.
 - **URLs fixas:** a URL do core está escrita no config dos MFEs. Num projeto real, ela viria de variáveis de ambiente por ambiente (dev, staging, prod).
 
